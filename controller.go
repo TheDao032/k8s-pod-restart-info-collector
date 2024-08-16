@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -39,8 +40,13 @@ func NewController(clientset kubernetes.Interface, slack Slack) *Controller {
 	const resyncPeriod = 0
 	ignoreRestartCount := getIgnoreRestartCount()
 
-	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
-	informerFactory := informers.NewSharedInformerFactory(clientset, resyncPeriod)
+	queue := workqueue.NewRateLimitingQueue(
+		workqueue.DefaultControllerRateLimiter(),
+	)
+	informerFactory := informers.NewSharedInformerFactory(
+		clientset,
+		resyncPeriod,
+	)
 	podInformer := informerFactory.Core().V1().Pods()
 	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: func(old interface{}, new interface{}) {
@@ -54,7 +60,8 @@ func NewController(clientset kubernetes.Interface, slack Slack) *Controller {
 				return
 			}
 
-			if !isWatchedNamespace(newPod.Namespace) || isIgnoredNamespace(newPod.Namespace) {
+			if !isWatchedNamespace(newPod.Namespace) ||
+				isIgnoredNamespace(newPod.Namespace) {
 				return
 			}
 
@@ -65,7 +72,13 @@ func NewController(clientset kubernetes.Interface, slack Slack) *Controller {
 			newPodRestartCount := getPodRestartCount(newPod)
 			// Ignore when restartCount > ignoreRestartCount
 			if newPodRestartCount > ignoreRestartCount {
-				klog.Infof("Ignore: %s/%s restartCount: %d > %d\n", newPod.Namespace, newPod.Name, newPodRestartCount, ignoreRestartCount)
+				klog.Infof(
+					"Ignore: %s/%s restartCount: %d > %d\n",
+					newPod.Namespace,
+					newPod.Name,
+					newPodRestartCount,
+					ignoreRestartCount,
+				)
 				return
 			}
 
@@ -75,7 +88,13 @@ func NewController(clientset kubernetes.Interface, slack Slack) *Controller {
 				if err == nil {
 					queue.Add(key)
 				}
-				klog.Infof("Found: %s/%s restarted, restartCount: %d -> %d\n", newPod.Namespace, newPod.Name, oldPodRestartCount, newPodRestartCount)
+				klog.Infof(
+					"Found: %s/%s restarted, restartCount: %d -> %d\n",
+					newPod.Namespace,
+					newPod.Name,
+					oldPodRestartCount,
+					newPodRestartCount,
+				)
 			}
 		},
 	})
@@ -184,7 +203,11 @@ func (c *Controller) getAndHandlePod(key string) error {
 func (c *Controller) getPodFromIndexer(key string) (*v1.Pod, error) {
 	obj, exists, err := c.podInformer.Informer().GetIndexer().GetByKey(key)
 	if err != nil {
-		klog.Errorf("Fetching object with key %s from store failed with %v", key, err)
+		klog.Errorf(
+			"Fetching object with key %s from store failed with %v",
+			key,
+			err,
+		)
 		return nil, err
 	}
 	if !exists {
@@ -204,12 +227,38 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 	// Skip if pod in slack.History
 	podKey := pod.Namespace + "/" + pod.Name
 
+	// Check if cronjob in slack.History
+	cronjobKey := "cronjob/" + pod.Namespace + "/" + os.Getenv(
+		"IGNORED_CRONJOB_NAME_PREFIXES",
+	)
+
 	currentTime := time.Now().Local()
 	if lastSentTime, ok := c.slack.History[podKey]; ok {
 		if int(currentTime.Sub(lastSentTime).Seconds()) < c.slack.MuteSeconds {
-			klog.Infof("Skip: %s, already sent %s ago.\n", podKey, duration.HumanDuration(time.Since(lastSentTime)))
+			klog.Infof(
+				"Skip: %s, already sent %s ago.\n",
+				podKey,
+				duration.HumanDuration(time.Since(lastSentTime)),
+			)
 			return nil
 		}
+	}
+
+	if isIgnoredCronjobPod(pod.Name) {
+		currentTime := time.Now().Local()
+		if lastSentTime, ok := c.slack.History[cronjobKey]; ok {
+			if int(
+				currentTime.Sub(lastSentTime).Seconds(),
+			) < c.slack.MuteCronjobSeconds {
+				klog.Infof(
+					"Skip: %s, already sent %s ago.\n",
+					cronjobKey,
+					duration.HumanDuration(time.Since(lastSentTime)),
+				)
+				return nil
+			}
+		}
+		c.slack.History[cronjobKey] = currentTime
 	}
 
 	// check and collect restarted container info
@@ -219,11 +268,19 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 		}
 
 		if shouldIgnoreRestartsWithExitCodeZero(status) {
-			klog.Infof("Ignore: %s restarted with ExitCode 0, restartCount: %d\n", podKey, status.RestartCount)
+			klog.Infof(
+				"Ignore: %s restarted with ExitCode 0, restartCount: %d\n",
+				podKey,
+				status.RestartCount,
+			)
 			continue
 		}
 
-		klog.Infof("Handle: %s restarted, restartCount: %d\n", podKey, status.RestartCount)
+		klog.Infof(
+			"Handle: %s restarted, restartCount: %d\n",
+			podKey,
+			status.RestartCount,
+		)
 
 		podInfo, err := printPod(pod)
 		if err != nil {
@@ -249,7 +306,13 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 			return err
 		}
 
-		podStatus := fmt.Sprintf("```%s```\n• Reason: `%s`\n• Pod Status\n```\n%s%s```\n", podInfo, restartReason, containerState, containerResource)
+		podStatus := fmt.Sprintf(
+			"```%s```\n• Reason: `%s`\n• Pod Status\n```\n%s%s```\n",
+			podInfo,
+			restartReason,
+			containerState,
+			containerResource,
+		)
 		podEvents, err := c.getPodEvents(pod)
 		if err != nil {
 			return err
@@ -275,9 +338,19 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 		}
 
 		msg := SlackMessage{
-			Title:  fmt.Sprintf("*Pod restarted!*\n*cluster: `%s`, pod: `%s`, namespace: `%s`*", c.slack.ClusterName, pod.Name, pod.Namespace),
-			Text:   podStatus + podEvents + nodeEvents + containerLogs,
-			Footer: fmt.Sprintf("%s, %s, %s", c.slack.ClusterName, pod.Name, pod.Namespace),
+			Title: fmt.Sprintf(
+				"*Pod restarted!*\n*cluster: `%s`, pod: `%s`, namespace: `%s`*",
+				c.slack.ClusterName,
+				pod.Name,
+				pod.Namespace,
+			),
+			Text: podStatus + podEvents + nodeEvents + containerLogs,
+			Footer: fmt.Sprintf(
+				"%s, %s, %s",
+				c.slack.ClusterName,
+				pod.Name,
+				pod.Namespace,
+			),
 		}
 		// klog.Infoln(msg.Title + "\n" + msg.Text + "\n" + msg.Footer)
 		slackChannel := getSlackChannelFromPod(pod)
@@ -294,7 +367,9 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 }
 
 func (c *Controller) getPodEvents(pod *v1.Pod) (out string, err error) {
-	events, err := c.clientset.CoreV1().Events(pod.Namespace).List(context.TODO(), metav1.ListOptions{FieldSelector: "type!=Normal"})
+	events, err := c.clientset.CoreV1().
+		Events(pod.Namespace).
+		List(context.TODO(), metav1.ListOptions{FieldSelector: "type!=Normal"})
 	if err != nil {
 		klog.Error("Failed while getting Pod events.")
 		return "", fmt.Errorf("got error while getting events: %v", err)
@@ -306,7 +381,12 @@ func (c *Controller) getPodEvents(pod *v1.Pod) (out string, err error) {
 	}
 	for _, event := range sortedEvents {
 		if event.InvolvedObject.Name == pod.Name {
-			out = out + fmt.Sprintf("%s, %s, %s\n", event.LastTimestamp, event.Reason, event.Message)
+			out = out + fmt.Sprintf(
+				"%s, %s, %s\n",
+				event.LastTimestamp,
+				event.Reason,
+				event.Message,
+			)
 		}
 	}
 	if out == "" {
@@ -318,14 +398,21 @@ func (c *Controller) getPodEvents(pod *v1.Pod) (out string, err error) {
 }
 
 func (c *Controller) getNodeAndEvents(pod *v1.Pod) (out string, err error) {
-	node, err := c.clientset.CoreV1().Nodes().Get(context.TODO(), pod.Spec.NodeName, metav1.GetOptions{})
+	node, err := c.clientset.CoreV1().
+		Nodes().
+		Get(context.TODO(), pod.Spec.NodeName, metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("Failed while getting the %s Node. Probably was deleted. ", pod.Spec.NodeName)
+		klog.Errorf(
+			"Failed while getting the %s Node. Probably was deleted. ",
+			pod.Spec.NodeName,
+		)
 		return "", err
 	}
 	out, _ = printNode(node)
 
-	events, err := c.clientset.CoreV1().Events(metav1.NamespaceDefault).List(context.TODO(), metav1.ListOptions{FieldSelector: "involvedObject.kind=Node"})
+	events, err := c.clientset.CoreV1().
+		Events(metav1.NamespaceDefault).
+		List(context.TODO(), metav1.ListOptions{FieldSelector: "involvedObject.kind=Node"})
 	if err != nil {
 		return "", fmt.Errorf("got error while getting events: %v", err)
 	}
@@ -336,7 +423,12 @@ func (c *Controller) getNodeAndEvents(pod *v1.Pod) (out string, err error) {
 	}
 	for _, event := range sortedEvents {
 		if event.InvolvedObject.Name == pod.Spec.NodeName {
-			out = out + fmt.Sprintf("%s, %s, %s\n", event.LastTimestamp, event.Reason, event.Message)
+			out = out + fmt.Sprintf(
+				"%s, %s, %s\n",
+				event.LastTimestamp,
+				event.Reason,
+				event.Message,
+			)
 		}
 	}
 
@@ -345,14 +437,20 @@ func (c *Controller) getNodeAndEvents(pod *v1.Pod) (out string, err error) {
 }
 
 // getContainerLogs gets previous terminated container logs
-func (c *Controller) getContainerLogs(pod *v1.Pod, containerStatus v1.ContainerStatus) (out string, err error) {
+func (c *Controller) getContainerLogs(
+	pod *v1.Pod,
+	containerStatus v1.ContainerStatus,
+) (out string, err error) {
 	logOptions := &v1.PodLogOptions{
 		Container:  containerStatus.Name,
 		Previous:   true,
 		Timestamps: true,
 		TailLines:  pointer.Int64Ptr(50),
 	}
-	rc, err := c.clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, logOptions).Stream(context.TODO())
+	rc, err := c.clientset.CoreV1().
+		Pods(pod.Namespace).
+		GetLogs(pod.Name, logOptions).
+		Stream(context.TODO())
 	if err != nil {
 		klog.Errorf("got error while getting %s logs: %v", pod.Name, err)
 		return "", fmt.Errorf("got error while getting logs: %v", err)

@@ -37,7 +37,10 @@ func isIgnoredNamespace(namespace string) bool {
 	for _, ignoredNamespace := range ignoredNamespaces {
 		match, _ := regexp.MatchString(ignoredNamespace, namespace)
 		if match {
-			klog.Infof("Ignore: namespace %s is in the ignored namespace list\n", namespace)
+			klog.Infof(
+				"Ignore: namespace %s is in the ignored namespace list\n",
+				namespace,
+			)
 			return true
 		}
 	}
@@ -53,7 +56,11 @@ func isIgnoredPod(name string) bool {
 	for _, ignoredPodNamePrefix := range ignoredPodNamePrefixes {
 		match, _ := regexp.MatchString(ignoredPodNamePrefix, name)
 		if match {
-			klog.Infof("Ignore: pod %s has ignored name prefix: %s\n", name, ignoredPodNamePrefix)
+			klog.Infof(
+				"Ignore: pod %s has ignored name prefix: %s\n",
+				name,
+				ignoredPodNamePrefix,
+			)
 			return true
 		}
 	}
@@ -94,12 +101,40 @@ func isWatchedPod(name string) bool {
 	return false
 }
 
+func isIgnoredCronjobPod(name string) bool {
+	ignoredCronjobNamePrefixesEnv := os.Getenv("IGNORED_CRONJOB_NAME_PREFIXES")
+	klog.Infof(
+		"ignoredCronjobNamePrefixesEnv: %s\n",
+		ignoredCronjobNamePrefixesEnv,
+	)
+	if ignoredCronjobNamePrefixesEnv == "" {
+		return false
+	}
+	ignoredCronjobNamePrefixes := strings.Split(
+		ignoredCronjobNamePrefixesEnv,
+		",",
+	)
+	for _, ignoredCronNamePrefix := range ignoredCronjobNamePrefixes {
+		match, _ := regexp.MatchString(ignoredCronNamePrefix, name)
+		if match {
+			klog.Infof(
+				"Ignore: pod %s has ignored name prefix: %s\n",
+				name,
+				ignoredCronNamePrefix,
+			)
+			return true
+		}
+	}
+	return false
+}
+
 func shouldIgnoreRestartsWithExitCodeZero(status v1.ContainerStatus) bool {
 	if os.Getenv("IGNORE_RESTARTS_WITH_EXIT_CODE_ZERO") != "true" {
 		return false
 	}
 
-	if status.LastTerminationState.Terminated != nil && status.LastTerminationState.Terminated.ExitCode == 0 {
+	if status.LastTerminationState.Terminated != nil &&
+		status.LastTerminationState.Terminated.ExitCode == 0 {
 		return true
 	}
 	return false
@@ -109,7 +144,10 @@ func getIgnoreRestartCount() int {
 	ignoreRestartCount, err := strconv.Atoi(os.Getenv("IGNORE_RESTART_COUNT"))
 	if err != nil {
 		ignoreRestartCount = 30
-		klog.Warningf("Environment variable IGNORE_RESTART_COUNT is not set, default: %d\n", ignoreRestartCount)
+		klog.Warningf(
+			"Environment variable IGNORE_RESTART_COUNT is not set, default: %d\n",
+			ignoreRestartCount,
+		)
 	}
 	return ignoreRestartCount
 }
@@ -142,7 +180,10 @@ func printPod(pod *v1.Pod) (string, error) {
 			// initialization is failed
 			if len(container.State.Terminated.Reason) == 0 {
 				if container.State.Terminated.Signal != 0 {
-					reason = fmt.Sprintf("Init:Signal:%d", container.State.Terminated.Signal)
+					reason = fmt.Sprintf(
+						"Init:Signal:%d",
+						container.State.Terminated.Signal,
+					)
 				} else {
 					reason = fmt.Sprintf("Init:ExitCode:%d", container.State.Terminated.ExitCode)
 				}
@@ -172,7 +213,8 @@ func printPod(pod *v1.Pod) (string, error) {
 					lastRestartDate = terminatedDate
 				}
 			}
-			if container.State.Waiting != nil && container.State.Waiting.Reason != "" {
+			if container.State.Waiting != nil &&
+				container.State.Waiting.Reason != "" {
 				reason = container.State.Waiting.Reason
 			} else if container.State.Terminated != nil && container.State.Terminated.Reason != "" {
 				reason = container.State.Terminated.Reason
@@ -206,13 +248,26 @@ func printPod(pod *v1.Pod) (string, error) {
 
 	restartsStr := strconv.Itoa(restarts)
 	if !lastRestartDate.IsZero() {
-		restartsStr = fmt.Sprintf("%d (%s ago)", restarts, translateTimestampSince(lastRestartDate))
+		restartsStr = fmt.Sprintf(
+			"%d (%s ago)",
+			restarts,
+			translateTimestampSince(lastRestartDate),
+		)
 	}
 
 	return tabbedString(func(out io.Writer) error {
 		w := describe.NewPrefixWriter(out)
 		w.Write(describe.LEVEL_0, "NAME\tREADY\tSTATUS\tRESTARTS\tAGE\n")
-		w.Write(describe.LEVEL_0, "%s\t%d/%d\t%s\t%s\t%s\n", pod.Name, readyContainers, totalContainers, reason, restartsStr, translateTimestampSince(pod.CreationTimestamp))
+		w.Write(
+			describe.LEVEL_0,
+			"%s\t%d/%d\t%s\t%s\t%s\n",
+			pod.Name,
+			readyContainers,
+			totalContainers,
+			reason,
+			restartsStr,
+			translateTimestampSince(pod.CreationTimestamp),
+		)
 		return nil
 	})
 }
@@ -254,14 +309,22 @@ func printNode(obj *v1.Node) (string, error) {
 	return tabbedString(func(out io.Writer) error {
 		w := describe.NewPrefixWriter(out)
 		w.Write(describe.LEVEL_0, "NAME\tSTATUS\tAGE\tVERSION\n")
-		w.Write(describe.LEVEL_0, "%s\t%s\t%s\t%s\n", obj.Name, strings.Join(status, ","), translateTimestampSince(obj.CreationTimestamp), obj.Status.NodeInfo.KubeletVersion)
+		w.Write(
+			describe.LEVEL_0,
+			"%s\t%s\t%s\t%s\n",
+			obj.Name,
+			strings.Join(status, ","),
+			translateTimestampSince(obj.CreationTimestamp),
+			obj.Status.NodeInfo.KubeletVersion,
+		)
 		return nil
 	})
 }
 
 func hasPodReadyCondition(conditions []v1.PodCondition) bool {
 	for _, condition := range conditions {
-		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
+		if condition.Type == v1.PodReady &&
+			condition.Status == v1.ConditionTrue {
 			return true
 		}
 	}
@@ -292,11 +355,19 @@ func describeContainerState(status v1.ContainerStatus) (string, error) {
 	})
 }
 
-func describeStatus(stateName string, state v1.ContainerState, w describe.PrefixWriter) {
+func describeStatus(
+	stateName string,
+	state v1.ContainerState,
+	w describe.PrefixWriter,
+) {
 	switch {
 	case state.Running != nil:
 		w.Write(describe.LEVEL_1, "%s:\tRunning\n", stateName)
-		w.Write(describe.LEVEL_2, "Started:\t%v\n", state.Running.StartedAt.Time.Format(time.RFC1123Z))
+		w.Write(
+			describe.LEVEL_2,
+			"Started:\t%v\n",
+			state.Running.StartedAt.Time.Format(time.RFC1123Z),
+		)
 	case state.Waiting != nil:
 		w.Write(describe.LEVEL_1, "%s:\tWaiting\n", stateName)
 		if state.Waiting.Reason != "" {
@@ -308,14 +379,26 @@ func describeStatus(stateName string, state v1.ContainerState, w describe.Prefix
 			w.Write(describe.LEVEL_2, "Reason:\t%s\n", state.Terminated.Reason)
 		}
 		if state.Terminated.Message != "" {
-			w.Write(describe.LEVEL_2, "Message:\t%s\n", state.Terminated.Message)
+			w.Write(
+				describe.LEVEL_2,
+				"Message:\t%s\n",
+				state.Terminated.Message,
+			)
 		}
 		w.Write(describe.LEVEL_2, "Exit Code:\t%d\n", state.Terminated.ExitCode)
 		if state.Terminated.Signal > 0 {
 			w.Write(describe.LEVEL_2, "Signal:\t%d\n", state.Terminated.Signal)
 		}
-		w.Write(describe.LEVEL_2, "Started:\t%s\n", state.Terminated.StartedAt.Time.Format(time.RFC1123Z))
-		w.Write(describe.LEVEL_2, "Finished:\t%s\n", state.Terminated.FinishedAt.Time.Format(time.RFC1123Z))
+		w.Write(
+			describe.LEVEL_2,
+			"Started:\t%s\n",
+			state.Terminated.StartedAt.Time.Format(time.RFC1123Z),
+		)
+		w.Write(
+			describe.LEVEL_2,
+			"Finished:\t%s\n",
+			state.Terminated.FinishedAt.Time.Format(time.RFC1123Z),
+		)
 	default:
 		w.Write(describe.LEVEL_1, "%s:\tWaiting\n", stateName)
 	}

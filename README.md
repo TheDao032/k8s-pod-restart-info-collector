@@ -75,12 +75,14 @@ helm uninstall k8s-pod-restart-info-collector
 | `clusterName`                       | K8s cluster name (Display on slack message)                        | required         |
 | `slackUsername`                     | Slack username (Display on slack message) | default: `"k8s-pod-restart-info-collector"`          |
 | `slackChannel`                      | Slack channel name | default: `"restart-info-nonprod"`          |
-| `muteSeconds`                       | The time to mute duplicate pod alerts | default: `"600"`    
+| `muteSeconds`                       | The time to mute duplicate pod alerts | default: `"600"`
+| `muteCronjobSeconds`                | The time to mute duplicate pod of cronjob alerts | default: `"1800"`
 | `ignoreRestartCount`                | The number of pod restart count to ignore | default: `"30"`
-| `ignoredNamespaces`                 | A set of namespaces to be ignored. This should be provided as a comma-separated list or a regular expression. | default: `""`    
-| `ignoredPodNamePrefixes`            | A set of pod name prefixes to be ignored. This should be provided as a comma-separated list or a regular expression. | default: `""`   
-| `watchedNamespaces`                 | A set of namespaces to be watched. This should be provided as a comma-separated list or a regular expression. | default: `""`    
-| `watchedPodNamePrefixes`            | A set of pod name prefixes to be watched. This should be provided as a comma-separated list or a regular expression. | default: `""`   
+| `ignoredNamespaces`                 | A set of namespaces to be ignored. This should be provided as a comma-separated list or a regular expression. | default: `""`
+| `ignoredPodNamePrefixes`            | A set of pod name prefixes to be ignored. This should be provided as a comma-separated list or a regular expression. | default: `""`
+| `ignoredCronjobNamePrefixes`        | A set of cronjob name prefixes to be ignored. This should be provided as a comma-separated list or a regular expression. | default: `""`
+| `watchedNamespaces`                 | A set of namespaces to be watched. This should be provided as a comma-separated list or a regular expression. | default: `""`
+| `watchedPodNamePrefixes`            | A set of pod name prefixes to be watched. This should be provided as a comma-separated list or a regular expression. | default: `""`
 | `ignoreRestartsWithExitCodeZero`    | Whether restart events with an exit code of 0 should be ignored | default: `false`
 | `slackWebhookUrl`                   | Slack webhook URL | required if slackWebhooUrlSecretKeyRef is not present                       |
 | `slackWebhookurlSecretKeyRef.key`   | Slack webhook URL SecretKeyRef.key                 | |

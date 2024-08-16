@@ -12,11 +12,12 @@ import (
 )
 
 type Slack struct {
-	WebhookUrl     string
-	DefaultChannel string // Slack channel name
-	Username       string // Slack username (will show in slack message)
-	ClusterName    string // Kubernete cluster name (will show in slack message)
-	MuteSeconds    int    // The time to mute duplicate alerts
+	WebhookUrl         string
+	DefaultChannel     string // Slack channel name
+	Username           string // Slack username (will show in slack message)
+	ClusterName        string // Kubernete cluster name (will show in slack message)
+	MuteSeconds        int    // The time to mute duplicate alerts
+	MuteCronjobSeconds int    // The time to mute duplicate alerts
 	// History stores sent alerts, key: Namespace/podName, value: sentTime
 	History map[string]time.Time
 }
@@ -36,34 +37,64 @@ func NewSlack() Slack {
 
 	if slackChannel = os.Getenv("SLACK_CHANNEL"); slackChannel == "" {
 		slackChannel = "restart-info-nonprod"
-		klog.Warningf("Environment variable SLACK_CHANNEL is not set, default: %s\n", slackChannel)
+		klog.Warningf(
+			"Environment variable SLACK_CHANNEL is not set, default: %s\n",
+			slackChannel,
+		)
 	}
 
 	if slackUsername = os.Getenv("SLACK_USERNAME"); slackUsername == "" {
 		slackUsername = "k8s-pod-restart-info-collector"
-		klog.Warningf("Environment variable SLACK_USERNAME is not set, default: %s\n", slackUsername)
+		klog.Warningf(
+			"Environment variable SLACK_USERNAME is not set, default: %s\n",
+			slackUsername,
+		)
 	}
 
 	if clusterName = os.Getenv("CLUSTER_NAME"); clusterName == "" {
 		clusterName = "cluster-name"
-		klog.Warningf("Environment variable CLUSTER_NAME is not set, default: %s\n", clusterName)
+		klog.Warningf(
+			"Environment variable CLUSTER_NAME is not set, default: %s\n",
+			clusterName,
+		)
 	}
 
 	muteSeconds, err := strconv.Atoi(os.Getenv("MUTE_SECONDS"))
 	if err != nil {
 		muteSeconds = 600
-		klog.Warningf("Environment variable MUTE_SECONDS is not set, default: %d\n", muteSeconds)
+		klog.Warningf(
+			"Environment variable MUTE_SECONDS is not set, default: %d\n",
+			muteSeconds,
+		)
 	}
 
-	klog.Infof("Slack Info: channel: %s, username: %s, clustername: %s, muteseconds: %d\n", slackChannel, slackUsername, clusterName, muteSeconds)
+	muteCronJobSeconds, err := strconv.Atoi(os.Getenv("MUTE_CRONJOB_SECONDS"))
+	if err != nil {
+		// Default muteCronJobSeconds is 30 minutes
+		muteCronJobSeconds = 1800
+		klog.Warningf(
+			"Environment variable MUTE_CRONJOB_SECONDS is not set, default: %d\n",
+			muteCronJobSeconds,
+		)
+	}
+
+	klog.Infof(
+		"Slack Info: channel: %s, username: %s, clustername: %s, muteseconds: %d, muteCronJobSeconds: %d\n",
+		slackChannel,
+		slackUsername,
+		clusterName,
+		muteSeconds,
+		muteCronJobSeconds,
+	)
 
 	return Slack{
-		WebhookUrl:     slackWebhookUrl,
-		DefaultChannel: slackChannel,
-		Username:       slackUsername,
-		ClusterName:    clusterName,
-		MuteSeconds:    muteSeconds,
-		History:        make(map[string]time.Time),
+		WebhookUrl:         slackWebhookUrl,
+		DefaultChannel:     slackChannel,
+		Username:           slackUsername,
+		ClusterName:        clusterName,
+		MuteSeconds:        muteSeconds,
+		MuteCronjobSeconds: muteCronJobSeconds,
+		History:            make(map[string]time.Time),
 	}
 }
 
@@ -92,6 +123,9 @@ func (s Slack) sendToChannel(msg SlackMessage, slackChannel string) error {
 		klog.Errorf("Sending to Slack channel failed with %v", err)
 		return err
 	}
-	klog.Infof("Sent: [%s] to Slack.\n\n", strings.Replace(msg.Title, "\n", " ", -1))
+	klog.Infof(
+		"Sent: [%s] to Slack.\n\n",
+		strings.Replace(msg.Title, "\n", " ", -1),
+	)
 	return nil
 }
