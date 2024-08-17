@@ -103,10 +103,6 @@ func isWatchedPod(name string) bool {
 
 func isIgnoredCronjobPod(name string) bool {
 	ignoredCronjobNamePrefixesEnv := os.Getenv("IGNORED_CRONJOB_NAME_PREFIXES")
-	klog.Infof(
-		"ignoredCronjobNamePrefixesEnv: %s\n",
-		ignoredCronjobNamePrefixesEnv,
-	)
 	if ignoredCronjobNamePrefixesEnv == "" {
 		return false
 	}
@@ -125,6 +121,27 @@ func isIgnoredCronjobPod(name string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func isWatchedCronjobPod(name string) bool {
+	watchedCronjobNamePrefixesEnv := os.Getenv(
+		"WATCHED_CRONJOB_NAME_PREFIXES",
+	)
+	if watchedCronjobNamePrefixesEnv == "" {
+		return true
+	}
+	watchedCronjobNamePrefixes := strings.Split(
+		watchedCronjobNamePrefixesEnv,
+		",",
+	)
+	for _, watchedCronjobNamePrefix := range watchedCronjobNamePrefixes {
+		match, _ := regexp.MatchString(watchedCronjobNamePrefix, name)
+		if match {
+			return true
+		}
+	}
+	// klog.Infof("Ignore: pod %s doesn't have the watched pod name prefixes\n", name)
 	return false
 }
 

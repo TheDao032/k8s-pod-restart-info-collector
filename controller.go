@@ -69,6 +69,11 @@ func NewController(clientset kubernetes.Interface, slack Slack) *Controller {
 				return
 			}
 
+			if !isWatchedCronjobPod(newPod.Name) ||
+				isIgnoredCronjobPod(newPod.Name) {
+				return
+			}
+
 			newPodRestartCount := getPodRestartCount(newPod)
 			// Ignore when restartCount > ignoreRestartCount
 			if newPodRestartCount > ignoreRestartCount {
@@ -192,7 +197,24 @@ func (c *Controller) getAndHandlePod(key string) error {
 		return err
 	}
 
-	err = c.handlePod(pod)
+	isCronjobPod := false
+	for _, ownerReference := range pod.OwnerReferences {
+		if ownerReference.Kind == "Job" {
+			isCronjobPod = true
+			fmt.Printf(
+				"Pod Name: %s, Created by CronJob: %v\n",
+				pod.Name,
+				ownerReference,
+			)
+		}
+	}
+
+	if isCronjobPod {
+		err = c.handleCronjobPod(pod)
+	} else {
+		err = c.handlePod(pod)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -227,11 +249,6 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 	// Skip if pod in slack.History
 	podKey := pod.Namespace + "/" + pod.Name
 
-	// Check if cronjob in slack.History
-	cronjobKey := "cronjob/" + pod.Namespace + "/" + os.Getenv(
-		"IGNORED_CRONJOB_NAME_PREFIXES",
-	)
-
 	currentTime := time.Now().Local()
 	if lastSentTime, ok := c.slack.History[podKey]; ok {
 		if int(currentTime.Sub(lastSentTime).Seconds()) < c.slack.MuteSeconds {
@@ -242,23 +259,6 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 			)
 			return nil
 		}
-	}
-
-	if isIgnoredCronjobPod(pod.Name) {
-		currentTime := time.Now().Local()
-		if lastSentTime, ok := c.slack.History[cronjobKey]; ok {
-			if int(
-				currentTime.Sub(lastSentTime).Seconds(),
-			) < c.slack.MuteCronjobSeconds {
-				klog.Infof(
-					"Skip: %s, already sent %s ago.\n",
-					cronjobKey,
-					duration.HumanDuration(time.Since(lastSentTime)),
-				)
-				return nil
-			}
-		}
-		c.slack.History[cronjobKey] = currentTime
 	}
 
 	// check and collect restarted container info
@@ -360,6 +360,130 @@ func (c *Controller) handlePod(pod *v1.Pod) error {
 		}
 
 		c.slack.History[podKey] = currentTime
+		c.cleanOldSlackHistory()
+		break
+	}
+	return nil
+}
+
+func (c *Controller) handleCronjobPod(pod *v1.Pod) error {
+	// Skip if cronjob in slack.History
+	ignoredCronjobNamePrefixesEnv := os.Getenv("IGNORED_CRONJOB_NAME_PREFIXES")
+	cronjobKey := "cronjob/" + pod.Namespace + "/" + ignoredCronjobNamePrefixesEnv
+
+	currentTime := time.Now().Local()
+	if lastSentTime, ok := c.slack.History[cronjobKey]; ok {
+		if int(
+			currentTime.Sub(lastSentTime).Seconds(),
+		) < c.slack.MuteCronjobSeconds {
+			klog.Infof(
+				"Skip: %s, already sent %s ago.\n",
+				cronjobKey,
+				duration.HumanDuration(time.Since(lastSentTime)),
+			)
+			return nil
+		}
+	}
+
+	// check and collect restarted container info
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.RestartCount == 0 {
+			continue
+		}
+
+		if shouldIgnoreRestartsWithExitCodeZero(status) {
+			klog.Infof(
+				"Ignore: %s restarted with ExitCode 0, restartCount: %d\n",
+				cronjobKey,
+				status.RestartCount,
+			)
+			continue
+		}
+
+		klog.Infof(
+			"Handle Cronjob: %s restarted, restartCount: %d\n",
+			cronjobKey,
+			status.RestartCount,
+		)
+
+		podInfo, err := printPod(pod)
+		if err != nil {
+			return err
+		}
+
+		containerState, err := describeContainerState(status)
+		if err != nil {
+			return err
+		}
+
+		restartReason := printContainerLastStateReason(status)
+
+		var containerSpec v1.Container
+		for _, container := range pod.Spec.Containers {
+			if status.Name == container.Name {
+				containerSpec = container
+				break
+			}
+		}
+		containerResource, err := getContainerResource(containerSpec)
+		if err != nil {
+			return err
+		}
+
+		podStatus := fmt.Sprintf(
+			"```%s```\n• Reason: `%s`\n• Pod Status\n```\n%s%s```\n",
+			podInfo,
+			restartReason,
+			containerState,
+			containerResource,
+		)
+		podEvents, err := c.getPodEvents(pod)
+		if err != nil {
+			return err
+		}
+		nodeEvents, err := c.getNodeAndEvents(pod)
+		if err != nil {
+			return err
+		}
+
+		containerLogs, err := c.getContainerLogs(pod, status)
+		if err != nil {
+			return err
+		}
+		if containerLogs == "" {
+			containerLogs = "• No Logs Before Restart\n"
+		} else {
+			// Slack attachment text will be truncated when > 8000 chars
+			maxLogLength := 7500 - len(podStatus+podEvents+nodeEvents)
+			if maxLogLength > 0 && len(containerLogs) > maxLogLength {
+				containerLogs = containerLogs[len(containerLogs)-maxLogLength:]
+			}
+			containerLogs = fmt.Sprintf("• Pod Logs Before Restart\n```\n%s```\n", containerLogs)
+		}
+
+		msg := SlackMessage{
+			Title: fmt.Sprintf(
+				"*Pod restarted!*\n*cluster: `%s`, pod: `%s`, namespace: `%s`*",
+				c.slack.ClusterName,
+				pod.Name,
+				pod.Namespace,
+			),
+			Text: podStatus + podEvents + nodeEvents + containerLogs,
+			Footer: fmt.Sprintf(
+				"%s, %s, %s",
+				c.slack.ClusterName,
+				pod.Name,
+				pod.Namespace,
+			),
+		}
+		// klog.Infoln(msg.Title + "\n" + msg.Text + "\n" + msg.Footer)
+		slackChannel := getSlackChannelFromPod(pod)
+		err = c.slack.sendToChannel(msg, slackChannel)
+		if err != nil {
+			return err
+		}
+
+		c.slack.History[cronjobKey] = currentTime
 		c.cleanOldSlackHistory()
 		break
 	}

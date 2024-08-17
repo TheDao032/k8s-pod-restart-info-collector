@@ -14,6 +14,7 @@ muteSeconds: 600
 ignoreRestartCount: 30
 
 # A set of cronjobs to be ignored. This should be provided as a comma-separated list or a regular expression.
+watchedCronjobNamePrefixes: ""
 ignoredCronjobNamePrefixes: ""
 muteCronjobSeconds: ""
 

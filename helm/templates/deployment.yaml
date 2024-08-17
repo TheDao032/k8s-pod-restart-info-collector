@@ -47,6 +47,8 @@ spec:
               value: {{ .Values.watchedNamespaces | quote}}
             - name: WATCHED_POD_NAME_PREFIXES
               value: {{ .Values.watchedPodNamePrefixes | quote}}
+            - name: WATCHED_CRONJOB_NAME_PREFIXES
+              value: {{ .Values.watchedCronjobNamePrefixes | quote}}
             - name: IGNORED_POD_NAME_PREFIXES
               value: {{ .Values.ignoredPodNamePrefixes | quote}}
             - name: IGNORED_CRONJOB_NAME_PREFIXES

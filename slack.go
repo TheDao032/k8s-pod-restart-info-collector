@@ -70,8 +70,7 @@ func NewSlack() Slack {
 
 	muteCronJobSeconds, err := strconv.Atoi(os.Getenv("MUTE_CRONJOB_SECONDS"))
 	if err != nil {
-		// Default muteCronJobSeconds is 30 minutes
-		muteCronJobSeconds = 1800
+		muteCronJobSeconds = 600
 		klog.Warningf(
 			"Environment variable MUTE_CRONJOB_SECONDS is not set, default: %d\n",
 			muteCronJobSeconds,
